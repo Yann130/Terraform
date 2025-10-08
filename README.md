@@ -7,6 +7,19 @@ La configuration met également en place une intégration avec **HashiCorp Vault
 
 ---
 
+## 🗂️ Structure des fichiers Terraform
+
+Voici les fichiers principaux du projet et leur rôle :
+
+| Fichier | Description |
+|---------|-------------|
+| **provider.tf** | Configure les providers utilisés : Azure et Vault. Définit l’authentification et les paramètres globaux. |
+| **variables.tf** | Contient toutes les variables utilisées dans le projet (ex : noms de VNet, sous-réseaux, tailles de VM, etc.). |
+| **main.tf** | Déclare toutes les ressources Azure : Resource Group, VNet, subnets, NSG, VMs, IP publique, interfaces réseau. Contient aussi la logique pour écrire l’IP publique dans Vault. |
+| **outputs.tf** | Définit les sorties Terraform : IP privée des VMs, IP publique du master, etc. pour une consultation facile après le déploiement. |
+
+---
+
 ## 🏗️ Architecture déployée
 
 L’infrastructure déployée comprend :
