@@ -1,0 +1,116 @@
+---
+- name: Préparer les machines (Master et Worker)
+  hosts: all
+  become: yes
+  tasks:
+    - name: Mettre à jour le système
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Installer les dépendances nécessaires
+      apt:
+        name:
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - software-properties-common
+          - gnupg
+          - lsb-release
+          - net-tools
+          - iptables
+          - ufw
+        state: present
+
+    - name: Désactiver le swap
+      command: swapoff -a
+      become: yes
+
+    - name: Supprimer le swap du fstab
+      replace:
+        path: /etc/fstab
+        regexp: '(^.*swap.*$)'
+        replace: '# \1'
+
+    - name: Activer les modules kernel requis
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
+      args:
+        warn: false
+
+    - name: Configurer les paramètres sysctl pour Kubernetes
+      copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+
+    - name: Appliquer les paramètres sysctl
+      command: sysctl --system
+
+    - name: Autoriser les ports nécessaires via UFW
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop:
+        - 22
+        - 6443
+        - 80
+        - 443
+        - 10250
+        - 2379
+        - 2380
+        - 8472
+        - 30000:32767/tcp
+        - 30000:32767/udp
+      ignore_errors: true
+
+    - name: Vérifier si K3s est déjà installé
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+- name: Installer K3s sur le master
+  hosts: master
+  become: yes
+  tasks:
+    - name: Installer K3s (master)
+      shell: |
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --cluster-init" sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Attendre que K3s soit prêt
+      shell: kubectl get nodes
+      register: nodes
+      retries: 10
+      delay: 10
+      until: nodes.rc == 0
+
+    - name: Récupérer le token K3s
+      shell: cat /var/lib/rancher/k3s/server/node-token
+      register: k3s_token
+      changed_when: false
+
+    - name: Sauvegarder le token localement
+      local_action:
+        module: copy
+        content: "{{ k3s_token.stdout }}"
+        dest: ./k3s_token.txt
+
+- name: Installer K3s sur le worker
+  hosts: worker
+  become: yes
+  vars:
+    master_ip: "{{ hostvars[groups['master'][0]]['ansible_host'] }}"
+    k3s_token: "{{ lookup('file', './k3s_token.txt') }}"
+  tasks:
+    - name: Installer K3s agent
+      shell: |
+        curl -sfL https://get.k3s.io | \
+        K3S_URL=https://{{ master_ip }}:6443 \
+        K3S_TOKEN={{ k3s_token }} sh -
+      args:
+        creates: /usr/local/bin/k3s-agent
